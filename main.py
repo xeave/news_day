@@ -11,6 +11,7 @@ import argparse
 from datetime import datetime, timedelta
 import akshare as ak
 import requests
+import os
 
 # 检查是否可以连接到 Ollama
 try:
@@ -30,6 +31,9 @@ class NewsProcessor:
         """
         初始化新闻处理器
         """
+        # 确保 datas 目录存在
+        os.makedirs("datas", exist_ok=True)
+        
         # 定义 boilerplate 模板（新闻联播固定模式）
         self.boilerplate_patterns = [
             r'^今天是\d{4}年\d{1,2}月\d{1,2}日.*?$',          # 日期串词
@@ -86,7 +90,7 @@ class NewsProcessor:
         # 国内重要关键词（用于辅助判断国内新闻）
         self.domestic_keywords = [
             '中共中央', '国务院', '全国人大', '全国政协', '总书记', '主席', '总理', 
-            '十四五', '十五五', '规划', '建议', '党中央', '中央政治局', '九大精神',
+            '十四五', '十五五', '规划', '建议', '党中央', '中央政治局', '思想',
             '全国人大常委会', '中央书记处', '中央军委', '人大常委', '政协', '中央纪委'
         ]
         
@@ -96,6 +100,17 @@ class NewsProcessor:
             '外交部发言人', '外长', '大使', '领事', '国外', '海外', '境外', '外国',
             '东盟', '欧盟', '非盟', '北约', '世贸组织', '世卫组织', '国际货币基金组织',
             '世界银行', '联合国安理会', 'G20', 'G7', 'APEC', '金砖国家', '峰会', '会见'
+        ]
+        
+        # 国内重要人物和职位关键词
+        self.domestic_person_keywords = [
+            '总书记', '主席', '总理', '委员长', '部长', '省长', '市长', '书记', '代表', '委员',
+            '中央政治局', '国务院', '全国人大', '全国政协'
+        ]
+        
+        # 国际重要人物和职位关键词
+        self.international_person_keywords = [
+            '总统', '首相', '总理', '外长', '大使', '联合国秘书长', '欧盟', '北约', '世卫组织'
         ]
 
     def fetch_news(self, date_str):
@@ -222,21 +237,45 @@ class NewsProcessor:
             if keyword in text:
                 return True
                 
+        # 检查是否包含国际人物或职位关键词
+        for keyword in self.international_person_keywords:
+            if keyword in text:
+                return True
+                
         # 检查是否包含国际活动标识
         international_indicators = ['当地时间', ' foreign ', ' international ']
         for indicator in international_indicators:
             if indicator in text:
                 return True
                 
+        # 检查是否包含较多国外地名
+        foreign_location_count = 0
+        for loc in ['美国', '俄罗斯', '日本', '韩国', '英国', '法国', '德国', '意大利', 
+                   '加拿大', '澳大利亚', '巴西', '印度', '埃及', '南非', '墨西哥', '马来西亚',
+                   '以色列', '加沙', '联合国', '东盟', '欧盟', '芬兰']:
+            if loc in text:
+                foreign_location_count += 1
+                
+        # 如果包含多个国外地名，更可能是国际新闻
+        if foreign_location_count >= 2:
+            return True
+            
         return False
 
     def _is_domestic_news(self, text):
         """
         判断文本是否属于国内新闻
         """
+        # 检查是否包含国内关键词
         for keyword in self.domestic_keywords:
             if keyword in text:
                 return True
+                
+        # 检查是否包含国内人物或职位关键词
+        for keyword in self.domestic_person_keywords:
+            if keyword in text:
+                return True
+                
         return False
 
     def _has_foreign_locations(self, text):
@@ -333,12 +372,25 @@ class NewsProcessor:
             return self.simple_summarize(text)
         
         # 截断文本以提高速度
-        text = text[:600]
+        text = text[:800]
         
-        prompt = f"""You are a CCTV news editor.
-Summarize the following Xinwen Lianbo piece into JSON:
-{{"title": "<10 words>", "summary": "<40 words>", "keywords": ["kw1"], "category": "domestic|international"}}
-Text:
+        prompt = f"""你是一名央视新闻联播的资深编辑，任务是对下面这段新闻进行「分类 + 摘要 + 关键词」抽取。
+输出必须是一段 **合法 JSON**，格式如下（不要添加任何代码块标记）：
+{{
+  "title": "10字以内",
+  "summary": "50字以内",
+  "keywords": ["kw1","kw2","kw3"],
+  "category": "domestic" 或 "international"
+}}
+
+判断规则（链式思考，按顺序执行）：
+1. 若文中出现「下面请看国际」或「下面是国际」或「国际新闻」字样 → 直接 international。
+2. 若出现「当地时间 / 国外 / 海外 / 境外 / 外国 / 大使馆 / 领事馆 / 外交部发言人 / 联合国 / 欧盟 / 东盟 / G20 / APEC / 金砖 / 峰会」等词 → 倾向 international。
+3. 若出现「总书记 / 总理 / 国务院 / 全国人大 / 全国政协 / 十四五 / 省委 / 市委 / 县委」等词 → 倾向 domestic。
+4. 若 2、3 冲突，则计数：国际关键词出现次数 > 国内关键词出现次数 → international，否则 domestic。
+5. 仍无法判断 → domestic（默认兜底）。
+
+新闻原文：
 {text}
 """
         
@@ -457,9 +509,11 @@ Text:
         
         print(f"摘要方法统计: 大模型={llm_count}, 简单程序={simple_count}")
         
-        with open(filename, 'w', encoding='utf-8') as f:
+        # 将文件保存到 datas 目录中
+        filepath = os.path.join("datas", filename)
+        with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
-        print(f"结果已保存到 {filename}")
+        print(f"结果已保存到 {filepath}")
 
 
 def main():
