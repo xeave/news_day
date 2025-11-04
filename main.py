@@ -31,8 +31,9 @@ class NewsProcessor:
         """
         初始化新闻处理器
         """
-        # 确保 datas 目录存在
+        # 确保 datas 和 xinwen 目录存在
         os.makedirs("datas", exist_ok=True)
+        os.makedirs("xinwen", exist_ok=True)
         
         # 定义 boilerplate 模板（新闻联播固定模式）
         self.boilerplate_patterns = [
@@ -62,6 +63,7 @@ class NewsProcessor:
             r'^(?:国务院总理|国家副主席|中共中央政治局常委|全国人大常委会).*?出席|'  # 高层活动
             r'^(?:当地时间|北京时间).*?，|'  # 国际新闻时间标识
             r'^\s*[\d\.]+、|'  # 数字序号
+            r'^\s*\d+[:：]\s*\d*\s*|'  # 数字标识，如"1: 2:"这样的格式
             r'^(?:以色列|美国|俄罗斯|日本|韩国|英国|法国|德国|意大利|加拿大|澳大利亚|巴西|印度|埃及|南非|墨西哥|马来西亚|加沙|联合国|东盟|欧盟).*?'  # 国际地名和组织开头的新闻
         )
 
@@ -163,6 +165,7 @@ class NewsProcessor:
         """
         将清洗后的新闻内容按逻辑分割成独立的新闻片段
         """
+        # 先按现有逻辑进行分割
         segments = []
         buffer = []
         
@@ -179,7 +182,72 @@ class NewsProcessor:
         if buffer:
             segments.append(' '.join(buffer))
         
-        return segments
+        # 对分割后的片段进一步处理，专门处理数字标识内容
+        refined_segments = []
+        for segment in segments:
+            # 将包含数字标识的内容进一步拆分
+            sub_segments = self._split_by_numeric_markers(segment)
+            refined_segments.extend(sub_segments)
+        
+        return refined_segments
+
+    def _split_by_numeric_markers(self, text):
+        """
+        根据数字标识（如"1: 2:"）将文本进一步分割
+        """
+        # 匹配数字标识的正则表达式（包括中文数字）
+        pattern = r'(?:(?:[一二三四五六七八九十]+|[1-9]\d*)[:：]\s*)'
+        matches = list(re.finditer(pattern, text))
+        
+        # 如果没有找到数字标识，直接返回原文本
+        if not matches:
+            return [text]
+        
+        # 分割文本
+        sub_segments = []
+        last_end = 0
+        
+        for match in matches:
+            # 添加标识前的内容（如果有）
+            if match.start() > last_end:
+                prev_text = text[last_end:match.start()].strip()
+                if prev_text:
+                    sub_segments.append(prev_text)
+            
+            # 添加标识后的内容直到下一个标识或文本结束
+            marker = match.group(0)
+            marker_end = match.end()
+            
+            # 查找下一个标识的位置
+            next_start = len(text)
+            for next_match in matches:
+                if next_match.start() > match.end():
+                    next_start = next_match.start()
+                    break
+            
+            # 提取从当前标识到下一个标识之间的内容
+            segment_content = text[marker_end:next_start].strip()
+            if segment_content:
+                sub_segments.append(marker + segment_content)
+            else:
+                sub_segments.append(marker)
+            
+            last_end = next_start
+        
+        # 添加剩余内容（如果有）
+        if last_end < len(text):
+            remaining_text = text[last_end:].strip()
+            if remaining_text:
+                # 如果最后一个片段是数字标识，则与其合并
+                if re.match(r'^(?:[一二三四五六七八九十]+|[1-9]\d*)[:：]\s*$', sub_segments[-1]):
+                    sub_segments[-1] = sub_segments[-1] + remaining_text
+                else:
+                    sub_segments.append(remaining_text)
+        
+        # 过滤掉空片段
+        sub_segments = [seg for seg in sub_segments if seg.strip()]
+        
+        return sub_segments if sub_segments else [text]
 
     def classify_domestic_international(self, segments):
         """
@@ -370,10 +438,6 @@ class NewsProcessor:
         """
         if not LLM_AVAILABLE:
             return self.simple_summarize(text)
-        
-        # 截断文本以提高速度
-        text = text[:800]
-        
         prompt = f"""你是一名央视新闻联播的资深编辑，任务是对下面这段新闻进行「分类 + 摘要 + 关键词」抽取。
 输出必须是一段 **合法 JSON**，格式如下（不要添加任何代码块标记）：
 {{
@@ -382,14 +446,6 @@ class NewsProcessor:
   "keywords": ["kw1","kw2","kw3"],
   "category": "domestic" 或 "international"
 }}
-
-判断规则（链式思考，按顺序执行）：
-1. 若文中出现「下面请看国际」或「下面是国际」或「国际新闻」字样 → 直接 international。
-2. 若出现「当地时间 / 国外 / 海外 / 境外 / 外国 / 大使馆 / 领事馆 / 外交部发言人 / 联合国 / 欧盟 / 东盟 / G20 / APEC / 金砖 / 峰会」等词 → 倾向 international。
-3. 若出现「总书记 / 总理 / 国务院 / 全国人大 / 全国政协 / 十四五 / 省委 / 市委 / 县委」等词 → 倾向 domestic。
-4. 若 2、3 冲突，则计数：国际关键词出现次数 > 国内关键词出现次数 → international，否则 domestic。
-5. 仍无法判断 → domestic（默认兜底）。
-
 新闻原文：
 {text}
 """
@@ -514,6 +570,12 @@ class NewsProcessor:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         print(f"结果已保存到 {filepath}")
+
+        # 同时保存到 xinwen 目录中
+        xinwen_filepath = os.path.join("xinwen", filename)
+        with open(xinwen_filepath, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        print(f"结果已保存到 {xinwen_filepath}")
 
 
 def main():

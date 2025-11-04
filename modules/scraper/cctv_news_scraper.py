@@ -2,10 +2,13 @@ import akshare as ak
 import json
 from datetime import datetime, timedelta
 import sys
+import os
 
 class CCTVNewsScraper:
     def __init__(self):
-        pass
+        # 确保xinwen目录存在
+        self.output_dir = "xinwen"
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def get_news_list(self, date=None):
         """
@@ -18,32 +21,18 @@ class CCTVNewsScraper:
             yesterday = datetime.now() - timedelta(days=1)
             date = yesterday.strftime("%Y%m%d")
         
-        try:
-            # 使用akshare获取新闻联播文字稿
-            df = ak.news_cctv(date=date)
-            
-            if df is not None and not df.empty:
-                # 构造新闻条目
-                news_items = []
-                for index, row in df.iterrows():
-                    news_items.append({
-                        'title': row['title'] if 'title' in row else f'新闻条目 {index+1}',
-                        'content': row['content'] if 'content' in row else '',
-                        'link': '',  # akshare不提供链接
-                        'date': date
-                    })
-                
-                return news_items
-            else:
-                print(f"无法获取指定日期({date})的新闻内容")
-                return []
-            
-        except Exception as e:
-            print(f"获取新闻内容时出错: {e}")
+        # 使用akshare获取新闻联播文字稿
+        df = ak.news_cctv(date=date)
+        print(f"获取 {date} 的新闻内容成功")
+        
+        # 将DataFrame转换为字典列表
+        if df is not None and not df.empty:
+            return df.to_dict('records')
+        else:
             return []
 
     def scrape_daily_news(self, date=None):
-        """
+        """ 
         抓取指定日期的新闻联播完整内容
         :param date: 日期，格式为YYYYMMDD
         :return: 完整的新闻内容字典
@@ -68,16 +57,22 @@ class CCTVNewsScraper:
         if filename is None:
             filename = f"xinwenlianbo_{data['date']}.json"
         
-        with open(filename, 'w', encoding='utf-8') as f:
+        # 保存到xinwen目录中
+        filepath = os.path.join(self.output_dir, filename)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"数据已保存到 {filename}")
+        print(f"数据已保存到 {filepath}")
 
     def save_to_markdown(self, data, filename=None):
         """保存为Markdown格式"""
         if filename is None:
             filename = f"xinwenlianbo_{data['date']}.md"
         
-        with open(filename, 'w', encoding='utf-8') as f:
+        # 保存到xinwen目录中
+        filepath = os.path.join(self.output_dir, filename)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
             f.write(f"# 新闻联播 {data['date'][:4]}年{data['date'][4:6]}月{data['date'][6:]}日\n\n")
             f.write(f"总条数: {data['news_count']}\n\n")
             
@@ -85,7 +80,7 @@ class CCTVNewsScraper:
                 f.write(f"## {news['title']}\n\n")
                 f.write(f"{news['content']}\n\n")
                 f.write("---\n\n")
-        print(f"数据已保存到 {filename}")
+        print(f"数据已保存到 {filepath}")
 
 def main():
     scraper = CCTVNewsScraper()
