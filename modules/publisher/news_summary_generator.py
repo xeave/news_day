@@ -3,7 +3,7 @@
 
 """
 新闻总结文章生成器
-将processed_xinwenlianbo_*.json文件内容转换为总结性文章并输出为HTML格式
+将full_result_*.json文件内容转换为总结性文章并输出为HTML格式
 """
 
 import os
@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 def load_processed_data(file_path):
     """
-    加载processed_xinwenlianbo_*.json文件
+    加载full_result_*.json文件
     
     Args:
         file_path (str): 文件路径
@@ -204,17 +204,17 @@ def generate_summary_content(news_data):
 
 def find_latest_processed_file():
     """
-    查找最新的processed_xinwenlianbo_*.json文件
+    查找最新的full_result_*.json文件
     
     Returns:
         str: 最新文件路径，如果未找到则返回None
     """
     # 搜索路径模式
     search_patterns = [
-        "processed_xinwenlianbo_*.json",
-        "datas/processed_xinwenlianbo_*.json",
-        "../datas/processed_xinwenlianbo_*.json",
-        "../../datas/processed_xinwenlianbo_*.json"
+        "full_result_*.json",
+        "datas/full_result_*.json",
+        "../datas/full_result_*.json",
+        "../../datas/full_result_*.json"
     ]
     
     processed_files = []
@@ -231,12 +231,12 @@ def main():
     """
     主函数：生成新闻总结文章
     """
-    # 查找最新的processed_xinwenlianbo文件
+    # 查找最新的full_result文件
     latest_file = find_latest_processed_file()
     
     if not latest_file:
-        print("未找到processed_xinwenlianbo_*.json文件")
-        print("请确保在项目根目录运行此脚本，或确保已生成processed_xinwenlianbo_*.json文件")
+        print("未找到full_result_*.json文件")
+        print("请确保在项目根目录运行此脚本，或确保已生成full_result_*.json文件")
         return
     
     print(f"处理文件: {latest_file}")
